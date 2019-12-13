@@ -10,7 +10,6 @@ import telepot.aio
 
 MY_NAME = 'visitelchebot'
 MY_COMMAND = '/visitelche'
-MY_TOKEN = open('token', 'rt').read().strip()
 MY_MASK = 'elche.png'
 
 FFMPEG_CMD = ('ffmpeg '
@@ -32,8 +31,6 @@ FFMPEG_CMD = ('ffmpeg '
               '" -map [v] -map 0:a? -c:a copy -y -preset ultrafast -threads 4 '
               '\'{dest}\'')
 
-last_msg_w_media = {}
-
 
 class TelegramBot(telepot.aio.Bot):
     PRIVATE_CHATS = ('private',)
@@ -42,58 +39,51 @@ class TelegramBot(telepot.aio.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._answerer = telepot.aio.helper.Answerer(self)
+        self.last_msg_w_media = {}
 
     async def on_chat_message(self, message):
         _, chat_type, chat_id, _, _ = telepot.glance(message, long=True)
         # pprint(message)
-        original_message = message
 
-        if chat_type in self.PUBLIC_CHATS and ('photo' in message or
-                                               'video' in message or
-                                               'animation' in message):
-            last_msg_w_media[chat_id] = message
+        if (chat_type in self.PUBLIC_CHATS and
+                ('photo' in message or 'video' in message or 'animation' in message)):
+            # store the last message of every chat
+            self.last_msg_w_media[chat_id] = message
 
         if chat_type in self.PRIVATE_CHATS:
             if 'reply_to_message' in message:
                 message = message['reply_to_message']
             if self.is_media_message(message):
-                await self.process(original_message, message)
+                await self.process(message)
             else:
-                if self.check_mention(message) and chat_id in last_msg_w_media:
-                    await self.process(original_message, last_msg_w_media[chat_id])
+                if self.check_mention(message) and chat_id in self.last_msg_w_media:
+                    await self.process(self.last_msg_w_media[chat_id])
                 else:
                     await self.send_message(message, caption='e')
         elif chat_type in self.PUBLIC_CHATS:
-            if 'reply_to_message' in message:
-                if self.check_mention(message):
+            if self.check_mention(message):
+                if 'reply_to_message' in message:
                     message = message['reply_to_message']
-                    if self.is_media_message(message):
-                        await self.process(original_message, message)
-                    else:
-                        await self.send_message(message, caption='e')
-            else:
-                if self.check_mention(message):
-                    if self.is_media_message(message):
-                        await self.process(original_message, message)
-                    else:
-                        if chat_id in last_msg_w_media:
-                            await self.process(original_message, last_msg_w_media[chat_id])
-                        else:
-                            await self.send_message(message, caption='e')
+                if self.is_media_message(message):
+                    await self.process(message)
+                # don't reply with something from last_msg_w_media if this is a reply message
+                elif chat_id in self.last_msg_w_media and 'reply_to_message' not in message:
+                    await self.process(self.last_msg_w_media[chat_id])
+                else:
+                    await self.send_message(message, caption='e')
 
-    async def process(self, original_message, message):
+
+    async def process(self, message):
         if 'photo' in message:
-            await self.process_photo(original_message, message)
+            await self.process_photo(message)
         elif 'video' in message or 'animation' in message:
-            await self.process_video(original_message, message)
+            await self.process_video(message)
 
     @staticmethod
     def is_media_message(message):
-        return ('photo' in message or
-                'video' in message or
-                'animation' in message)
+        return 'photo' in message or 'video' in message or 'animation' in message
 
-    async def process_photo(self, original_message, message):
+    async def process_photo(self, message):
         file_id = message['photo'][-1]['file_id']
         file_dest = 'tmp/%s.jpg' % file_id
         if not os.path.exists(file_dest):
@@ -108,13 +98,13 @@ class TelegramBot(telepot.aio.Bot):
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
             await self.sendChatAction(chat_id, 'upload_photo')
-            last_msg_w_media[chat_id] = await self.send_message(original_message, quote_msg_id=msg_id,
-                                                                type_='photo', filename=new_filename)
+            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
+                                                                     type_='photo', filename=new_filename)
         except:
             await self.send_message(message, caption='no he podido enviar la foto tuneada :(')
         print('Sent')
 
-    async def process_video(self, original_message, message):
+    async def process_video(self, message):
         if 'video' in message:
             message_video = message['video']
         elif 'animation' in message:
@@ -144,8 +134,8 @@ class TelegramBot(telepot.aio.Bot):
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
             await self.sendChatAction(chat_id, 'upload_video')
-            last_msg_w_media[chat_id] = await self.send_message(original_message, quote_msg_id=msg_id,
-                                                                type_='file', filename=new_filename)
+            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
+                                                                     type_='file', filename=new_filename)
         except:
             await self.send_message(message, caption='no he podido enviar el vídeo tuneado :(')
         finally:
@@ -163,7 +153,7 @@ class TelegramBot(telepot.aio.Bot):
             return await self.sendMessage(message['chat']['id'], text,
                                           disable_web_page_preview=no_preview,
                                           reply_to_message_id=quote_msg_id)
-        elif type_ == 'photo':
+        if type_ == 'photo':
             if not filename:
                 raise ValueError('You need a file parameter to send a photo')
             if caption:
@@ -171,7 +161,7 @@ class TelegramBot(telepot.aio.Bot):
             with open(filename, 'rb') as f:
                 return await self.sendPhoto(message['chat']['id'], f, caption=caption,
                                             reply_to_message_id=quote_msg_id)
-        elif type_ == 'file':
+        if type_ == 'file':
             if not filename:
                 raise ValueError('You need a file parameter to send a file')
             if caption:
@@ -179,6 +169,7 @@ class TelegramBot(telepot.aio.Bot):
             with open(filename, 'rb') as f:
                 return await self.sendDocument(message['chat']['id'], f,
                                                reply_to_message_id=quote_msg_id)
+        raise ValueError('Unknown message type ' + type_)
 
     @staticmethod
     def check_mention(msg):
@@ -195,19 +186,10 @@ class TelegramBot(telepot.aio.Bot):
     def ellipsis(text, max_):
         return text[:max_ - 3] + '...' if len(text) > max_ else text
 
-    @staticmethod
-    def _get_command(text):
-        command, _, rest = text.partition(' ')
-        command = command[1:]
-        rest = rest.strip()
-        return command, rest
-
 
 def compose(filename):
-    def clamp(n, minn, maxn):
-        ret = max(min(maxn, n), minn)
-        print('Clamping %s to %s - %s: %s' % (n, minn, maxn, ret))
-        return ret
+    def clamp(number, minn, maxn):
+        return max(min(maxn, number), minn)
 
     with Image(filename=filename) as original:
         bg_img = Image(original)
@@ -233,7 +215,7 @@ def compose(filename):
 
 
 if __name__ == '__main__':
-    bot = TelegramBot(MY_TOKEN)
+    bot = TelegramBot(open('token', 'rt').read().strip())
 
     loop = asyncio.get_event_loop()
     loop.create_task(bot.message_loop())
