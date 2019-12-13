@@ -10,7 +10,7 @@ import telepot.aio
 
 MY_NAME = 'visitelchebot'
 MY_COMMAND = '/visitelche'
-MY_TOKEN = ''
+MY_TOKEN = open('token', 'rt').read().strip()
 MY_MASK = 'elche.png'
 
 FFMPEG_CMD = ('ffmpeg '
@@ -18,11 +18,16 @@ FFMPEG_CMD = ('ffmpeg '
               '-i \'{source}\' '
               # second input: images to overlay
               '-loop 1 -start_number 1 -start_number_range 8 -framerate 30 -i tiktok/%02d.png '
+              # third input: subtitle
+              '-loop 1 -framerate 30 -i elche_tiktok.png '
               # filter
               '-filter_complex "'
-              '[0:v]fps=fps=30[in];'  # convert source to 30 fps
-              '[1:v][in]scale2ref=oh*mdar:h=ih/8[logo][base];'  # resize images
-              '[base][logo]overlay=0:0:eof_action=endall[v]'  # overlay images
+              '[0:v]fps=fps=30[base];'  # convert source to 30 fps
+              '[base]scale=w=-2:h=600[base];' # resize source to 600 px min
+              '[1:v][base]scale2ref=oh*mdar:h=ih/8[logo1][base];'  # resize moving logo
+              '[2:v][base]scale2ref=oh*mdar:h=ih/4[logo2][base];'  # resize subtitle
+              '[logo2][logo1]overlay=0:0:eof_action=endall[logo];'  # merge both logos
+              '[base][logo]overlay=0:0:eof_action=endall[v]'  # put logo over video
               # output options
               '" -map [v] -map 0:a? -c:a copy -y -preset ultrafast -threads 4 '
               '\'{dest}\'')
