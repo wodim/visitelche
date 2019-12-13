@@ -44,7 +44,8 @@ class TelegramBot(telepot.aio.Bot):
         original_message = message
 
         if chat_type in self.PUBLIC_CHATS and ('photo' in message or
-                                               'video' in message):
+                                               'video' in message or
+                                               'animation' in message):
             last_msg_w_media[chat_id] = message
 
         if chat_type in self.PRIVATE_CHATS:
@@ -78,12 +79,14 @@ class TelegramBot(telepot.aio.Bot):
     async def process(self, original_message, message):
         if 'photo' in message:
             await self.process_photo(original_message, message)
-        elif 'video' in message:
+        elif 'video' in message or 'animation' in message:
             await self.process_video(original_message, message)
 
     @staticmethod
     def is_media_message(message):
-        return 'photo' in message or 'video' in message
+        return ('photo' in message or
+                'video' in message or
+                'animation' in message)
 
     async def process_photo(self, original_message, message):
         file_id = message['photo'][-1]['file_id']
@@ -107,11 +110,15 @@ class TelegramBot(telepot.aio.Bot):
         print('Sent')
 
     async def process_video(self, original_message, message):
-        if message['video']['file_size'] > 20 * 1024 * 1024:
+        if 'video' in message:
+            message_video = message['video']
+        elif 'animation' in message:
+            message_video = message['animation']
+        if message_video['file_size'] > 20 * 1024 * 1024:
             await self.send_message(message, caption='un poco grande no hijo de puta?')
         wait_msg = await self.send_message(message, caption=('vale, recibido. no me atosigues porque soy '
                                                              'un pobre procesador arm de 3€ al mes'))
-        file_id = message['video']['file_id']
+        file_id = message_video['file_id']
         file_dest = 'tmp/%s.mp4' % file_id
         if not os.path.exists(file_dest):
             print('Downloading')
