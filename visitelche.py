@@ -10,15 +10,15 @@ import telepot.aio
 
 MY_NAME = 'visitelchebot'
 MY_COMMAND = '/visitelche'
-MY_MASK = 'elche.png'
+MY_MASK = 'images/elche.png'
 
 FFMPEG_CMD = ('ffmpeg '
               # first input: base video
               '-i \'{source}\' '
               # second input: images to overlay
-              '-loop 1 -start_number 1 -start_number_range 8 -framerate 30 -i tiktok/%02d.png '
+              '-loop 1 -start_number 1 -start_number_range 8 -framerate 30 -i images/elche_tiktok_%02d.png '
               # third input: subtitle
-              '-loop 1 -framerate 30 -i elche_tiktok.png '
+              '-loop 1 -framerate 30 -i images/elche_tiktok_sub.png '
               # filter
               '-filter_complex "'
               '[0:v]fps=fps=30[base];'  # convert source to 30 fps
