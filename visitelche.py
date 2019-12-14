@@ -28,7 +28,7 @@ FFMPEG_CMD = ('ffmpeg '
               '[logo2][logo1]overlay=0:0:eof_action=endall[logo];'  # merge both logos
               '[base][logo]overlay=0:0:eof_action=endall[v]'  # put logo over video
               # output options
-              '" -map [v] -map 0:a? -c:a copy -y -preset ultrafast -threads 4 '
+              '" -map [v] -map 0:a? -c:a copy -y -preset ultrafast -crf 27 -threads 4 '
               '\'{dest}\'')
 
 
