@@ -22,7 +22,7 @@ FFMPEG_CMD = ('ffmpeg '
               # filter
               '-filter_complex "'
               '[0:v]fps=fps=30[base];'  # convert source to 30 fps
-              '[base]scale=w=-2:h=600[base];' # resize source to 600 px min
+              '[base]scale=w=-2:h=600[base];'  # resize source to 600 px min
               '[1:v][base]scale2ref=oh*mdar:h=ih/8[logo1][base];'  # resize moving logo
               '[2:v][base]scale2ref=oh*mdar:h=ih/4[logo2][base];'  # resize subtitle
               '[logo2][logo1]overlay=0:0:eof_action=endall[logo];'  # merge both logos
