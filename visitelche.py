@@ -40,6 +40,7 @@ class TelegramBot(telepot.aio.Bot):
         super().__init__(*args, **kwargs)
         self._answerer = telepot.aio.helper.Answerer(self)
         self.last_msg_w_media = {}
+        self.busy = False
 
     async def on_chat_message(self, message):
         _, chat_type, chat_id, _, _ = telepot.glance(message, long=True)
@@ -105,6 +106,8 @@ class TelegramBot(telepot.aio.Bot):
         print('Sent')
 
     async def process_video(self, message):
+        if self.busy:
+            await self.send_message(message, caption='estoy haciendo cositas, inténtalo luego')
         if 'video' in message:
             message_video = message['video']
         elif 'animation' in message:
@@ -125,7 +128,9 @@ class TelegramBot(telepot.aio.Bot):
         new_filename = 'tmp/%s_.mp4' % file_id
         cmd = FFMPEG_CMD.format(source=file_dest, dest=new_filename)
         print(cmd)
+        self.busy = True
         subprocess.call(cmd, shell=True)
+        self.busy = False
         if not os.path.exists(new_filename):
             print('ffmpeg did not output anything')
             await self.send_message(message, caption='no he podido crear el vídeo tuneado :(')
