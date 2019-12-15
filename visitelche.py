@@ -12,7 +12,7 @@ MY_NAME = 'visitelchebot'
 MY_COMMAND = '/visitelche'
 MY_MASK = 'images/elche.png'
 
-FFMPEG_CMD = ('ffmpeg '
+FFMPEG_CMD = ('ffmpeg -hide_banner '
               # first input: base video
               '-i \'{source}\' '
               # second input: images to overlay
@@ -122,8 +122,10 @@ class TelegramBot(telepot.aio.Bot):
             print('Downloading')
             try:
                 await self.download_file(file_id, file_dest)
-            except:
+            except Exception as exc:
                 await self.send_message(message, caption='no me he podido bajar el vídeo :(')
+                print('Failed to download video. Error was: ' + str(exc))
+                return
         print('Downloaded. Composing')
         new_filename = 'tmp/%s_.mp4' % file_id
         cmd = FFMPEG_CMD.format(source=file_dest, dest=new_filename)
@@ -141,8 +143,10 @@ class TelegramBot(telepot.aio.Bot):
             await self.sendChatAction(chat_id, 'upload_video')
             self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
                                                                      type_='file', filename=new_filename)
-        except:
+        except Exception as exc:
             await self.send_message(message, caption='no he podido enviar el vídeo tuneado :(')
+            print('Failed to send video. Error was: ' + str(exc))
+            return
         finally:
             await self.deleteMessage(telepot.message_identifier(wait_msg))
         print('Sent')
