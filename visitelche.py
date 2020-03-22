@@ -127,6 +127,7 @@ class TelegramBot(telepot.aio.Bot):
             message_video = message['animation']
         if message_video['file_size'] > 20 * 1024 * 1024:
             await self.send_message(message, caption='un poco grande no hijo de puta?')
+            return
         wait_msg = await self.send_message(message, caption=('vale, recibido. no me atosigues porque soy '
                                                              'un pobre procesador arm de 3€ al mes'))
         file_id = message_video['file_id']
