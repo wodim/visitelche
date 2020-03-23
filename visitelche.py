@@ -86,7 +86,7 @@ class TelegramBot(telepot.aio.Bot):
                     await self.send_message(message, caption='e')
 
     async def process(self, message, type_=None):
-        if 'photo' in message and type_ is None:
+        if 'photo' in message and (type_ == MY_COMMAND or type_ is None):
             await self.process_photo(message)
         elif 'video' in message or 'animation' in message:
             await self.process_video(message, type_)
