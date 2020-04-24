@@ -1,6 +1,7 @@
 import asyncio
 # from pprint import pprint
 import os
+import random
 import subprocess
 
 from wand.image import Image
@@ -9,9 +10,18 @@ import telepot.aio
 
 
 MY_NAME = 'visitelchebot'
+
 MY_COMMAND = '/visitelche'
 MY_COMMAND_P = '/pescanova'
-MY_MASK = 'assets/elche.png'
+MY_COMMAND_B = '/bulo'
+
+IMAGE_CMDS = (MY_COMMAND, MY_COMMAND_B)
+VIDEO_CMDS = (MY_COMMAND, MY_COMMAND_P)
+
+MASKS = {
+    MY_COMMAND: ('assets/elche.png',),
+    MY_COMMAND_B: ('assets/bulo1.png', 'assets/bulo2.png', 'assets/bulo3.png',),
+}
 
 FFMPEG_CMD = ('ffmpeg -hide_banner '
               # first input: base video
@@ -50,7 +60,6 @@ class TelegramBot(telepot.aio.Bot):
         super().__init__(*args, **kwargs)
         self._answerer = telepot.aio.helper.Answerer(self)
         self.last_msg_w_media = {}
-        self.busy = False
 
     async def on_chat_message(self, message):
         _, chat_type, chat_id, _, _ = telepot.glance(message, long=True)
@@ -86,9 +95,9 @@ class TelegramBot(telepot.aio.Bot):
                     await self.send_message(message, caption='e')
 
     async def process(self, message, type_=None):
-        if 'photo' in message and (type_ == MY_COMMAND or type_ is None):
-            await self.process_photo(message)
-        elif 'video' in message or 'animation' in message:
+        if 'photo' in message and type_ in IMAGE_CMDS:
+            await self.process_image(message, type_)
+        elif ('video' in message or 'animation' in message) and type_ in VIDEO_CMDS:
             await self.process_video(message, type_)
         else:
             await self.send_message(message, caption='mis kojones')
@@ -97,7 +106,7 @@ class TelegramBot(telepot.aio.Bot):
     def is_media_message(message):
         return 'photo' in message or 'video' in message or 'animation' in message
 
-    async def process_photo(self, message):
+    async def process_image(self, message, type_):
         file_id = message['photo'][-1]['file_id']
         file_dest = 'tmp/%s.jpg' % file_id
         if not os.path.exists(file_dest):
@@ -107,7 +116,7 @@ class TelegramBot(telepot.aio.Bot):
             except:
                 await self.send_message(message, caption='no me he podido bajar la foto :(')
         print('Downloaded. Composing')
-        new_filename = compose(file_dest)
+        new_filename = compose(file_dest, type_)
         print('Composed. Sending')
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
@@ -119,8 +128,6 @@ class TelegramBot(telepot.aio.Bot):
         print('Sent')
 
     async def process_video(self, message, type_):
-        if self.busy:
-            await self.send_message(message, caption='estoy haciendo cositas, inténtalo luego')
         if 'video' in message:
             message_video = message['video']
         elif 'animation' in message:
@@ -147,9 +154,7 @@ class TelegramBot(telepot.aio.Bot):
         else:
             cmd = FFMPEG_CMD.format(source=file_dest, dest=new_filename)
         print(cmd)
-        self.busy = True
         subprocess.call(cmd, shell=True)
-        self.busy = False
         if not os.path.exists(new_filename):
             print('ffmpeg did not output anything')
             await self.send_message(message, caption='no he podido crear el vídeo tuneado :(')
@@ -205,37 +210,43 @@ class TelegramBot(telepot.aio.Bot):
             text = msg['caption']
         else:
             return False
-        if text.lower().startswith(MY_COMMAND_P):
-            return MY_COMMAND_P
-        if ('@' + MY_NAME.lower() in text.lower() or
-                text.lower().startswith(MY_COMMAND)):
+        if text.lower() == '@' + MY_NAME.lower():
             return MY_COMMAND
+        for cmd in IMAGE_CMDS + VIDEO_CMDS:
+            if (text.lower() == cmd or
+                    text.lower().startswith(cmd + '@' + MY_NAME)):
+                return cmd
 
     @staticmethod
     def ellipsis(text, max_):
         return text[:max_ - 3] + '...' if len(text) > max_ else text
 
 
-def compose(filename):
+def compose(filename, type_):
     def clamp(number, minn, maxn):
         return max(min(maxn, number), minn)
+
+    if type_ not in IMAGE_CMDS:
+        raise ValueError('incorrect type for compose %s' % type_)
 
     with Image(filename=filename) as original:
         bg_img = Image(original)
     # remove the alpha channel, if any
     bg_img.alpha_channel = False
 
-    with Image(filename=MY_MASK) as original:
+    with Image(filename=random.choice(MASKS[type_])) as original:
         mask_img = Image(original)
 
-    mask_w = (bg_img.width / 2) * (bg_img.height / bg_img.width)
-    mask_w = clamp(mask_w, bg_img.width / 2.5, bg_img.width / 1.5)
-    mask_w = int(mask_w)
-    mask_h = bg_img.height
-    print('Original %dx%d ratio %.1f' % (bg_img.width, bg_img.height, bg_img.width / bg_img.height))
-    mask_img.transform(resize='{}x{}'.format(mask_w, mask_h))
-
-    bg_img.composite(mask_img, left=bg_img.width - mask_w, top=0)
+    if type_ == MY_COMMAND:
+        mask_w = (bg_img.width / 2) * (bg_img.height / bg_img.width)
+        mask_w = clamp(mask_w, bg_img.width / 2.5, bg_img.width / 1.5)
+        mask_w = int(mask_w)
+        mask_h = bg_img.height
+        mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
+        bg_img.composite(mask_img, left=bg_img.width - mask_w, top=0)
+    elif type_ == MY_COMMAND_B:
+        mask_img.transform(resize='%dx%d' % (bg_img.width, bg_img.height))
+        bg_img.composite(mask_img, gravity='center')
 
     bg_img.compression_quality = 100
     new_filename = 'tmp/masked_%s.jpg' % (filename.replace('/', '_'))
