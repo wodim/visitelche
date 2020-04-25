@@ -65,19 +65,23 @@ class TelegramBot(telepot.aio.Bot):
         _, chat_type, chat_id, _, _ = telepot.glance(message, long=True)
         # pprint(message)
 
-        if (chat_type in self.PUBLIC_CHATS and
-                ('photo' in message or 'video' in message or 'animation' in message)):
+        if self.is_media_message(message):
             # store the last message of every chat
             self.last_msg_w_media[chat_id] = message
 
         if chat_type in self.PRIVATE_CHATS:
+            mention = self.check_mention(message)
             if 'reply_to_message' in message:
                 message = message['reply_to_message']
             if self.is_media_message(message):
-                await self.process(message)
+                if mention:
+                    await self.process(message, mention)
+                else:
+                    commands = ' '.join(self.get_possible_commands(message))
+                    await self.send_message(message, caption='me lo guardo, dime qué hago:\n' + commands)
             else:
-                mention = self.check_mention(message)
-                if mention and chat_id in self.last_msg_w_media:
+                # don't reply with something from last_msg_w_media if this is a reply message
+                if chat_id in self.last_msg_w_media and 'reply_to_message' not in message:
                     await self.process(self.last_msg_w_media[chat_id], mention)
                 else:
                     await self.send_message(message, caption='e')
@@ -95,7 +99,7 @@ class TelegramBot(telepot.aio.Bot):
                     await self.send_message(message, caption='e')
 
     async def process(self, message, type_=None):
-        if 'photo' in message and type_ in IMAGE_CMDS:
+        if 'photo' in message and (type_ in IMAGE_CMDS or type_ is None):
             await self.process_image(message, type_)
         elif ('video' in message or 'animation' in message) and type_ in VIDEO_CMDS:
             await self.process_video(message, type_)
@@ -104,7 +108,24 @@ class TelegramBot(telepot.aio.Bot):
 
     @staticmethod
     def is_media_message(message):
-        return 'photo' in message or 'video' in message or 'animation' in message
+        return TelegramBot.is_photo_message(message) or TelegramBot.is_video_message(message)
+
+    @staticmethod
+    def is_photo_message(message):
+        return 'photo' in message
+
+    @staticmethod
+    def is_video_message(message):
+        return 'video' in message or 'animation' in message
+
+    @staticmethod
+    def get_possible_commands(message):
+        if TelegramBot.is_photo_message(message):
+            return IMAGE_CMDS
+        elif TelegramBot.is_video_message(message):
+            return VIDEO_CMDS
+        else:
+            return ()
 
     async def process_image(self, message, type_):
         file_id = message['photo'][-1]['file_id']
