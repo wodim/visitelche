@@ -1,0 +1,6 @@
+version: "3.3"
+services:
+  visitelchebot:
+    build: .
+    container_name: VisitelcheBot
+    restart: unless-stopped
