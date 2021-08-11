@@ -11,16 +11,18 @@ import telepot.aio
 
 MY_NAME = 'visitelchebot'
 
-MY_COMMAND = '/visitelche'
-MY_COMMAND_P = '/pescanova'
-MY_COMMAND_B = '/bulo'
+CMD_VISITELCHE = '/visitelche'
+CMD_PESCANOVA = '/pescanova'
+CMD_BULO = '/bulo'
+CMD_ALVISE = '/alvise'
 
-IMAGE_CMDS = (MY_COMMAND, MY_COMMAND_B)
-VIDEO_CMDS = (MY_COMMAND, MY_COMMAND_P)
+IMAGE_CMDS = (CMD_VISITELCHE, CMD_BULO, CMD_ALVISE)
+VIDEO_CMDS = (CMD_VISITELCHE, CMD_PESCANOVA)
 
 MASKS = {
-    MY_COMMAND: ('assets/elche.png',),
-    MY_COMMAND_B: ('assets/bulo1.png', 'assets/bulo2.png', 'assets/bulo3.png',),
+    CMD_VISITELCHE: ('assets/elche.png',),
+    CMD_BULO: ('assets/bulo1.png', 'assets/bulo2.png', 'assets/bulo3.png',),
+    CMD_ALVISE: ('assets/alvise.png',),
 }
 
 FFMPEG_CMD = ('ffmpeg -hide_banner '
@@ -170,7 +172,7 @@ class TelegramBot(telepot.aio.Bot):
                 return
         print('Downloaded. Composing')
         new_filename = 'tmp/%s_.mp4' % file_id
-        if type_ == MY_COMMAND_P:
+        if type_ == CMD_PESCANOVA:
             cmd = FFMPEG_CMP.format(source=file_dest, dest=new_filename)
         else:
             cmd = FFMPEG_CMD.format(source=file_dest, dest=new_filename)
@@ -232,7 +234,7 @@ class TelegramBot(telepot.aio.Bot):
         else:
             return False
         if text.lower() == '@' + MY_NAME.lower():
-            return MY_COMMAND
+            return CMD_VISITELCHE
         for cmd in IMAGE_CMDS + VIDEO_CMDS:
             if (text.lower() == cmd or
                     text.lower().startswith(cmd + '@' + MY_NAME)):
@@ -258,16 +260,25 @@ def compose(filename, type_):
     with Image(filename=random.choice(MASKS[type_])) as original:
         mask_img = Image(original)
 
-    if type_ == MY_COMMAND:
+    if type_ == CMD_VISITELCHE:
         mask_w = (bg_img.width / 2) * (bg_img.height / bg_img.width)
         mask_w = clamp(mask_w, bg_img.width / 2.5, bg_img.width / 1.5)
         mask_w = int(mask_w)
         mask_h = bg_img.height
         mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
         bg_img.composite(mask_img, left=bg_img.width - mask_w, top=0)
-    elif type_ == MY_COMMAND_B:
+    elif type_ == CMD_BULO:
         mask_img.transform(resize='%dx%d' % (bg_img.width, bg_img.height))
         bg_img.composite(mask_img, gravity='center')
+    elif type_ == CMD_ALVISE:
+        mask_img.rotate(random.uniform(-35, -5))
+        scaling_factor = random.uniform(.5, .7)
+        mask_w, mask_h = (bg_img.width * scaling_factor,
+                          bg_img.height * scaling_factor)
+        mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
+        offset_left = random.randint(0, bg_img.width - mask_img.width)
+        offset_top = random.randint(0, bg_img.height - mask_img.height)
+        bg_img.composite(mask_img, left=offset_left, top=offset_top)
 
     bg_img.compression_quality = 100
     new_filename = 'tmp/masked_%s.jpg' % (filename.replace('/', '_'))
