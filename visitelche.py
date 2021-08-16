@@ -329,6 +329,11 @@ def compose(filename, type_, new_filename=None):
         mask_img.transform(resize='%dx%d' % (bg_img.width, bg_img.height))
         bg_img.composite(mask_img, gravity='center')
     elif type_ in (CMD_ALVISE, CMD_MEGAALVISE):
+        if type_ == CMD_MEGAALVISE:
+            if bg_img.width % 2 == 1:
+                bg_img.crop(0, 0, width=bg_img.width - 1)
+            if bg_img.height % 2 == 1:
+                bg_img.crop(0, 0, width=bg_img.height - 1)
         mask_img.rotate(random.uniform(-35, -5))
         scaling_factor = random.uniform(.5, .7)
         mask_w, mask_h = (bg_img.width * scaling_factor,
