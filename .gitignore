@@ -1,3 +1,4 @@
 token
 /tmp/*
 !/tmp/.keep
+/test_*

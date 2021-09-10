@@ -4,6 +4,8 @@ import os
 import random
 import subprocess
 
+from wand.color import Color
+from wand.drawing import Drawing
 from wand.image import Image
 import telepot
 import telepot.aio
@@ -24,8 +26,6 @@ ITOV_CMDS = (CMD_MEGAALVISE,)
 MASKS = {
     CMD_VISITELCHE: ('assets/elche.png',),
     CMD_BULO: ('assets/bulo1.png', 'assets/bulo2.png', 'assets/bulo3.png',),
-    CMD_ALVISE: ('assets/alvise.png',),
-    CMD_MEGAALVISE: ('assets/alvise_mini.png',),
 }
 
 FFMPEG_CMD_VISITELCHE = (
@@ -142,7 +142,7 @@ class TelegramBot(telepot.aio.Bot):
     def get_possible_commands(message):
         if TelegramBot.is_photo_message(message):
             return IMAGE_CMDS + ITOV_CMDS
-        elif TelegramBot.is_video_message(message):
+        if TelegramBot.is_video_message(message):
             return VIDEO_CMDS
         return ()
 
@@ -157,7 +157,10 @@ class TelegramBot(telepot.aio.Bot):
                 await self.send_message(message, caption='no me he podido bajar la foto :(')
                 return
         print('Downloaded. Composing')
-        new_filename = compose(file_dest, type_)
+        if type_ == CMD_ALVISE:
+            new_filename = compose_text(file_dest, type_)
+        else:
+            new_filename = compose(file_dest, type_)
         print('Composed. Sending')
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
@@ -181,14 +184,21 @@ class TelegramBot(telepot.aio.Bot):
         wait_msg = await self.send_message(message, caption=('vale, recibido. no me atosigues porque soy '
                                                              'un pobre procesador arm de 3€ al mes'))
         print('Downloaded. Composing')
-        for i in range(100):
+        mask_amount = 50
+        last_pct = 0
+        for i in range(mask_amount):
             previous = '%s_%03d.jpg' % (file_dest, i - 1) if i != 0 else file_dest
             next_ = '%s_%03d.jpg' % (file_dest, i)
-            new_filename = compose(previous, type_, next_)
+            new_filename = compose_text(previous, type_, next_)
+            current_pct = i / mask_amount * 100
+            if current_pct > last_pct + 8:
+                await self.editMessageText(telepot.message_identifier(wait_msg), '%.01f%%...' % (current_pct))
+                last_pct = current_pct
         new_filename = 'tmp/%s_.mp4' % file_id
         cmd = FFMPEG_CMD_MEGAALVISE.format(source='%s_*.jpg' % file_dest,
                                            dest=new_filename)
         print(cmd)
+        await self.editMessageText(telepot.message_identifier(wait_msg), '99.%s%%...' % ('9' * random.randint(3, 12)))
         subprocess.call(cmd, shell=True)
         if not os.path.exists(new_filename):
             print('ffmpeg did not output anything')
@@ -297,17 +307,18 @@ class TelegramBot(telepot.aio.Bot):
             if (text.lower() == cmd or
                     text.lower().startswith(cmd + '@' + MY_NAME)):
                 return cmd
+        return False
 
     @staticmethod
     def ellipsis(text, max_):
         return text[:max_ - 3] + '...' if len(text) > max_ else text
 
 
-def compose(filename, type_, new_filename=None):
+def compose(filename, type_):
     def clamp(number, minn, maxn):
         return max(min(maxn, number), minn)
 
-    if type_ not in IMAGE_CMDS + ITOV_CMDS:
+    if type_ not in IMAGE_CMDS:
         raise ValueError('incorrect type for compose %s' % type_)
 
     with Image(filename=filename) as original:
@@ -328,20 +339,52 @@ def compose(filename, type_, new_filename=None):
     elif type_ == CMD_BULO:
         mask_img.transform(resize='%dx%d' % (bg_img.width, bg_img.height))
         bg_img.composite(mask_img, gravity='center')
-    elif type_ in (CMD_ALVISE, CMD_MEGAALVISE):
-        if type_ == CMD_MEGAALVISE:
-            if bg_img.width % 2 == 1:
-                bg_img.crop(0, 0, width=bg_img.width - 1)
-            if bg_img.height % 2 == 1:
-                bg_img.crop(0, 0, width=bg_img.height - 1)
-        mask_img.rotate(random.uniform(-35, -5))
-        scaling_factor = random.uniform(.5, .7)
-        mask_w, mask_h = (bg_img.width * scaling_factor,
-                          bg_img.height * scaling_factor)
-        mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
-        offset_left = random.randint(0, bg_img.width - mask_img.width)
-        offset_top = random.randint(0, bg_img.height - mask_img.height)
-        bg_img.composite(mask_img, left=offset_left, top=offset_top)
+
+    bg_img.compression_quality = 100
+    new_filename = 'tmp/masked_%s.jpg' % (filename.replace('/', '_'))
+    bg_img.save(filename=new_filename)
+    return new_filename
+
+
+def compose_text(filename, type_, new_filename=None):
+    if type_ not in (CMD_ALVISE, CMD_MEGAALVISE):
+        raise ValueError('incorrect type for compose_text %s' % type_)
+
+    with Image(filename=filename) as original:
+        bg_img = Image(original)
+    # remove the alpha channel, if any
+    bg_img.alpha_channel = False
+
+    if type_ == CMD_MEGAALVISE:
+        invalid_w, invalid_h = bg_img.width % 2 == 1, bg_img.height % 2 == 1
+        if invalid_w or invalid_h:
+            bg_img.crop(
+                0, 0,
+                width=bg_img.width - 1 if invalid_w else bg_img.width,
+                height=bg_img.height - 1 if invalid_h else bg_img.height
+            )
+
+    with Drawing() as drawing:
+        # fill the drawing primitives
+        drawing.font = 'assets/HelveticaNeueLTCom-Md.ttf'
+        drawing.font_size = 100
+        drawing.gravity = 'north_west'
+        text = '@Alvisepf'.replace('|', '\n')
+        drawing.fill_color = Color('#56fdb4')
+        metrics = drawing.get_font_metrics(bg_img, text, '\n' in text)
+        mask_w, mask_h = int(metrics.text_width), int(metrics.text_height)
+        drawing.text(0, 0, text)
+
+        with Image(width=mask_w, height=mask_h) as mask_img:
+            drawing.draw(mask_img)
+            mask_img.rotate(random.uniform(-35, -5))
+            scaling_factor = random.uniform(.6, .9)
+            mask_w = bg_img.width * scaling_factor
+            mask_h = mask_img.height * mask_w / mask_img.width * scaling_factor
+            mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
+            offset_left = random.randint(0, bg_img.width - mask_img.width)
+            offset_top = random.randint(0, bg_img.height - mask_img.height)
+            bg_img.composite(mask_img, left=offset_left, top=offset_top)
 
     bg_img.compression_quality = 100
     if not new_filename:
