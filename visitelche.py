@@ -127,7 +127,7 @@ class TelegramBot(telepot.aio.Bot):
                                        '99.%s%%...' % ('9' * random.randint(3, 12)))
             return
 
-        if current > 0 and self.last_msg_edit < time.time() - 1:
+        if current > 0 and self.last_msg_edit < time.time() - 2:
             current_pct = current / total * 100
             await self.editMessageText(telepot.message_identifier(wait_msg),
                                        '%.01f%%...' % (current_pct))
