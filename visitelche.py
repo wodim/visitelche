@@ -1,73 +1,30 @@
 import asyncio
 # from pprint import pprint
 import os
-import random
-import subprocess
 
-from wand.color import Color
-from wand.drawing import Drawing
-from wand.image import Image
 import telepot
 import telepot.aio
 
+from composer import Composer
+import messages
 
 MY_NAME = 'visitelchebot'
 
 CMD_VISITELCHE = '/visitelche'
 CMD_PESCANOVA = '/pescanova'
 CMD_BULO = '/bulo'
+CMD_SUPERBULO = '/superbulo'
 CMD_ALVISE = '/alvise'
 CMD_MEGAALVISE = '/megaalvise'
 
-IMAGE_CMDS = (CMD_VISITELCHE, CMD_BULO, CMD_ALVISE)
+# image -> image
+IMAGE_CMDS = (CMD_VISITELCHE, CMD_BULO, CMD_SUPERBULO, CMD_ALVISE)
+# video -> video
 VIDEO_CMDS = (CMD_VISITELCHE, CMD_PESCANOVA)
+# image -> video
 ITOV_CMDS = (CMD_MEGAALVISE,)
-
-MASKS = {
-    CMD_VISITELCHE: ('assets/elche.png',),
-    CMD_BULO: ('assets/bulo1.png', 'assets/bulo2.png', 'assets/bulo3.png',),
-}
-
-FFMPEG_CMD_VISITELCHE = (
-    'ffmpeg -hide_banner '
-    # first input: base video
-    '-i \'{source}\' '
-    # second input: images to overlay
-    '-loop 1 -start_number 1 -start_number_range 8 -framerate 30 -i assets/elche_tiktok_%02d.png '
-    # third input: subtitle
-    '-loop 1 -framerate 30 -i assets/elche_tiktok_sub.png '
-    # filter
-    '-filter_complex "'
-    '[0:v]fps=fps=30[base];'  # convert source to 30 fps
-    '[base]scale=w=-2:h=600[base];'  # resize source to 600 px min
-    '[1:v][base]scale2ref=oh*mdar:h=ih/8[logo1][base];'  # resize moving logo
-    '[2:v][base]scale2ref=oh*mdar:h=ih/4[logo2][base];'  # resize subtitle
-    '[logo2][logo1]overlay=0:0:eof_action=endall[logo];'  # merge both logos
-    '[base][logo]overlay=0:0:eof_action=endall[v]'  # put logo over video
-    # output options
-    '" -map [v] -map 0:a? -c:a copy -y -preset ultrafast -crf 27 -threads 4 '
-    '\'{dest}\''
-)
-
-FFMPEG_CMD_PESCANOVA = (
-    'ffmpeg -hide_banner '
-    # first input: base video
-    '-i \'{source}\' '
-    # second input: base audio
-    '-i assets/pescanova.aac '
-    # output options
-    ' -map 0:0 -map 1:0 -c:a copy -c:v copy -shortest -y '
-    '\'{dest}\''
-)
-
-FFMPEG_CMD_MEGAALVISE = (
-    'ffmpeg -hide_banner -framerate 15 '
-    # first input: base video
-    '-pattern_type glob -i \'{source}\' '
-    # output options
-    ' -r 15 -shortest -y '
-    '\'{dest}\''
-)
+# commands that accept a text parameter
+TEXT_CMDS = (CMD_ALVISE, CMD_MEGAALVISE)
 
 
 class TelegramBot(telepot.aio.Bot):
@@ -87,44 +44,106 @@ class TelegramBot(telepot.aio.Bot):
             # store the last message of every chat
             self.last_msg_w_media[chat_id] = message
 
+        mention = self.check_mention(message)
+        args = self.get_text_from_message(message)
         if chat_type in self.PRIVATE_CHATS:
-            mention = self.check_mention(message)
             if 'reply_to_message' in message:
                 message = message['reply_to_message']
             if self.is_media_message(message):
                 if mention:
-                    await self.process(message, mention)
+                    await self.process(message, mention, args)
                 else:
                     commands = ' '.join(self.get_possible_commands(message))
-                    await self.send_message(message, caption='me lo guardo, dime qué hago:\n' + commands)
+                    await self.send_message(message, caption=messages.AWAITING_INPUT + '\n' + commands)
             else:
                 # don't reply with something from last_msg_w_media if this is a reply message
                 if chat_id in self.last_msg_w_media and 'reply_to_message' not in message:
-                    await self.process(self.last_msg_w_media[chat_id], mention)
+                    await self.process(self.last_msg_w_media[chat_id], mention, args)
                 else:
-                    await self.send_message(message, caption='e')
+                    await self.send_message(message, caption=messages.INVALID_COMMAND)
         elif chat_type in self.PUBLIC_CHATS:
-            mention = self.check_mention(message)
             if mention:
                 if 'reply_to_message' in message:
                     message = message['reply_to_message']
                 if self.is_media_message(message):
-                    await self.process(message, mention)
+                    await self.process(message, mention, args)
                 # don't reply with something from last_msg_w_media if this is a reply message
                 elif chat_id in self.last_msg_w_media and 'reply_to_message' not in message:
-                    await self.process(self.last_msg_w_media[chat_id], mention)
+                    await self.process(self.last_msg_w_media[chat_id], mention, args)
                 else:
-                    await self.send_message(message, caption='e')
+                    await self.send_message(message, caption=messages.INVALID_COMMAND)
 
-    async def process(self, message, type_=None):
-        if 'photo' in message and (type_ in IMAGE_CMDS or type_ is None):
-            await self.process_image(message, type_)
-        elif 'photo' in message and (type_ in ITOV_CMDS):
-            await self.process_itov(message, type_)
-        elif ('video' in message or 'animation' in message) and type_ in VIDEO_CMDS:
-            await self.process_video(message, type_)
+    async def process(self, message, type_, args):
+        if not self.is_command_appropriate(message, type_):
+            await self.send_message(message, caption=messages.INVALID_INPUT)
+            return
+
+        # download the base media
+        try:
+            file_dest, media_type = await self.download_media(message)
+        except ValueError as exc:
+            await self.send_message(message, caption=str(exc))
+
+        if media_type == 'photo' and type_ not in ITOV_CMDS:
+            chat_action = 'upload_photo'
+            attachment_type = 'photo'
+            error_caption = messages.FAILED_TO_SEND_PICTURE
         else:
-            await self.send_message(message, caption='mis kojones')
+            chat_action = 'upload_video'
+            attachment_type = 'file'
+            error_caption = messages.FAILED_TO_SEND_VIDEO
+
+        composer = Composer(file_dest)
+        fun = getattr(composer, 'compose_%s_%s' % (attachment_type, type_[1:]))
+        if type_ in TEXT_CMDS:
+            text = (' '.join(args.split(' ')[1:])) if args else None
+            new_filename = fun(text)
+        else:
+            new_filename = fun()
+
+        try:
+            _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
+            await self.sendChatAction(chat_id, chat_action)
+            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
+                                                                     type_=attachment_type,
+                                                                     filename=new_filename)
+        except Exception:
+            await self.send_message(message, caption=error_caption)
+
+    async def download_media(self, message):
+        if 'video' in message or 'animation' in message:
+            if 'video' in message:
+                message_video = message['video']
+            elif 'animation' in message:
+                message_video = message['animation']
+            if message_video['file_size'] > 20 * 1024 * 1024:
+                raise ValueError(messages.VIDEO_TOO_BIG)
+            error_message = messages.FAILED_TO_DOWNLOAD_VIDEO
+
+            file_id = message_video['file_id']
+            file_dest = 'tmp/%s.mp4' % file_id
+            media_type = 'video'
+        elif 'photo' in message:
+            error_message = messages.FAILED_TO_DOWNLOAD_PICTURE
+
+            file_id = message['photo'][-1]['file_id']
+            file_dest = 'tmp/%s.jpg' % file_id
+            media_type = 'photo'
+        else:
+            raise ValueError('trying to download media from a msg with no media')
+
+        if not os.path.exists(file_dest):
+            try:
+                await self.download_file(file_id, file_dest)
+            except:
+                raise ValueError(error_message)
+
+        return file_dest, media_type
+
+    @staticmethod
+    def is_command_appropriate(message, type_):
+        return ('photo' in message and (type_ in IMAGE_CMDS or type_ in ITOV_CMDS or type_ is None) or
+                (('video' in message or 'animation' in message) and type_ in VIDEO_CMDS))
 
     @staticmethod
     def is_media_message(message):
@@ -145,124 +164,6 @@ class TelegramBot(telepot.aio.Bot):
         if TelegramBot.is_video_message(message):
             return VIDEO_CMDS
         return ()
-
-    async def process_image(self, message, type_):
-        file_id = message['photo'][-1]['file_id']
-        file_dest = 'tmp/%s.jpg' % file_id
-        if not os.path.exists(file_dest):
-            print('Downloading')
-            try:
-                await self.download_file(file_id, file_dest)
-            except:
-                await self.send_message(message, caption='no me he podido bajar la foto :(')
-                return
-        print('Downloaded. Composing')
-        if type_ == CMD_ALVISE:
-            new_filename = compose_text(file_dest, type_)
-        else:
-            new_filename = compose(file_dest, type_)
-        print('Composed. Sending')
-        try:
-            _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
-            await self.sendChatAction(chat_id, 'upload_photo')
-            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
-                                                                     type_='photo', filename=new_filename)
-        except:
-            await self.send_message(message, caption='no he podido enviar la foto tuneada :(')
-        print('Sent')
-
-    async def process_itov(self, message, type_):
-        file_id = message['photo'][-1]['file_id']
-        file_dest = 'tmp/%s.jpg' % file_id
-        if not os.path.exists(file_dest):
-            print('Downloading')
-            try:
-                await self.download_file(file_id, file_dest)
-            except:
-                await self.send_message(message, caption='no me he podido bajar la foto :(')
-                return
-        wait_msg = await self.send_message(message, caption=('vale, recibido. no me atosigues porque soy '
-                                                             'un pobre procesador arm de 3€ al mes'))
-        print('Downloaded. Composing')
-        mask_amount = 50
-        last_pct = 0
-        for i in range(mask_amount):
-            previous = '%s_%03d.jpg' % (file_dest, i - 1) if i != 0 else file_dest
-            next_ = '%s_%03d.jpg' % (file_dest, i)
-            new_filename = compose_text(previous, type_, next_)
-            current_pct = i / mask_amount * 100
-            if current_pct > last_pct + 8:
-                await self.editMessageText(telepot.message_identifier(wait_msg), '%.01f%%...' % (current_pct))
-                last_pct = current_pct
-        new_filename = 'tmp/%s_.mp4' % file_id
-        cmd = FFMPEG_CMD_MEGAALVISE.format(source='%s_*.jpg' % file_dest,
-                                           dest=new_filename)
-        print(cmd)
-        await self.editMessageText(telepot.message_identifier(wait_msg), '99.%s%%...' % ('9' * random.randint(3, 12)))
-        subprocess.call(cmd, shell=True)
-        if not os.path.exists(new_filename):
-            print('ffmpeg did not output anything')
-            await self.send_message(message, caption='no he podido crear el vídeo tuneado :(')
-            return
-        print('Composed. Sending')
-        try:
-            _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
-            await self.sendChatAction(chat_id, 'upload_video')
-            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
-                                                                     type_='file', filename=new_filename)
-        except Exception as exc:
-            await self.send_message(message, caption='no he podido enviar el vídeo tuneado :(')
-            print('Failed to send video. Error was: ' + str(exc))
-            return
-        finally:
-            await self.deleteMessage(telepot.message_identifier(wait_msg))
-        print('Sent')
-
-    async def process_video(self, message, type_):
-        if 'video' in message:
-            message_video = message['video']
-        elif 'animation' in message:
-            message_video = message['animation']
-        if message_video['file_size'] > 20 * 1024 * 1024:
-            await self.send_message(message, caption='un poco grande no hijo de puta?')
-            return
-        wait_msg = await self.send_message(message, caption=('vale, recibido. no me atosigues porque soy '
-                                                             'un pobre procesador arm de 3€ al mes'))
-        file_id = message_video['file_id']
-        file_dest = 'tmp/%s.mp4' % file_id
-        if not os.path.exists(file_dest):
-            print('Downloading')
-            try:
-                await self.download_file(file_id, file_dest)
-            except Exception as exc:
-                await self.send_message(message, caption='no me he podido bajar el vídeo :(')
-                print('Failed to download video. Error was: ' + str(exc))
-                return
-        print('Downloaded. Composing')
-        new_filename = 'tmp/%s_.mp4' % file_id
-        if type_ == CMD_PESCANOVA:
-            cmd = FFMPEG_CMD_PESCANOVA.format(source=file_dest, dest=new_filename)
-        else:
-            cmd = FFMPEG_CMD_VISITELCHE.format(source=file_dest, dest=new_filename)
-        print(cmd)
-        subprocess.call(cmd, shell=True)
-        if not os.path.exists(new_filename):
-            print('ffmpeg did not output anything')
-            await self.send_message(message, caption='no he podido crear el vídeo tuneado :(')
-            return
-        print('Composed. Sending')
-        try:
-            _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
-            await self.sendChatAction(chat_id, 'upload_video')
-            self.last_msg_w_media[chat_id] = await self.send_message(message, quote_msg_id=msg_id,
-                                                                     type_='file', filename=new_filename)
-        except Exception as exc:
-            await self.send_message(message, caption='no he podido enviar el vídeo tuneado :(')
-            print('Failed to send video. Error was: ' + str(exc))
-            return
-        finally:
-            await self.deleteMessage(telepot.message_identifier(wait_msg))
-        print('Sent')
 
     async def send_message(self, message, caption=None, filename=None,
                            type_='text', no_preview=False,
@@ -294,13 +195,19 @@ class TelegramBot(telepot.aio.Bot):
         raise ValueError('Unknown message type ' + type_)
 
     @staticmethod
-    def check_mention(msg):
-        if 'text' in msg:
-            text = msg['text']
-        elif 'caption' in msg:
-            text = msg['caption']
-        else:
+    def get_text_from_message(message):
+        if 'text' in message:
+            return message['text']
+        if 'caption' in message:
+            return message['caption']
+        return None
+
+    @staticmethod
+    def check_mention(message):
+        if not (text := TelegramBot.get_text_from_message(message)):
             return False
+        if ' ' in text:
+            text = text.split(' ')[0]
         if text.lower() == '@' + MY_NAME.lower():
             return CMD_VISITELCHE
         for cmd in IMAGE_CMDS + VIDEO_CMDS + ITOV_CMDS:
@@ -311,86 +218,7 @@ class TelegramBot(telepot.aio.Bot):
 
     @staticmethod
     def ellipsis(text, max_):
-        return text[:max_ - 3] + '...' if len(text) > max_ else text
-
-
-def compose(filename, type_):
-    def clamp(number, minn, maxn):
-        return max(min(maxn, number), minn)
-
-    if type_ not in IMAGE_CMDS:
-        raise ValueError('incorrect type for compose %s' % type_)
-
-    with Image(filename=filename) as original:
-        bg_img = Image(original)
-    # remove the alpha channel, if any
-    bg_img.alpha_channel = False
-
-    with Image(filename=random.choice(MASKS[type_])) as original:
-        mask_img = Image(original)
-
-    if type_ == CMD_VISITELCHE:
-        mask_w = (bg_img.width / 2) * (bg_img.height / bg_img.width)
-        mask_w = clamp(mask_w, bg_img.width / 2.5, bg_img.width / 1.5)
-        mask_w = int(mask_w)
-        mask_h = bg_img.height
-        mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
-        bg_img.composite(mask_img, left=bg_img.width - mask_w, top=0)
-    elif type_ == CMD_BULO:
-        mask_img.transform(resize='%dx%d' % (bg_img.width, bg_img.height))
-        bg_img.composite(mask_img, gravity='center')
-
-    bg_img.compression_quality = 100
-    new_filename = 'tmp/masked_%s.jpg' % (filename.replace('/', '_'))
-    bg_img.save(filename=new_filename)
-    return new_filename
-
-
-def compose_text(filename, type_, new_filename=None):
-    if type_ not in (CMD_ALVISE, CMD_MEGAALVISE):
-        raise ValueError('incorrect type for compose_text %s' % type_)
-
-    with Image(filename=filename) as original:
-        bg_img = Image(original)
-    # remove the alpha channel, if any
-    bg_img.alpha_channel = False
-
-    if type_ == CMD_MEGAALVISE:
-        invalid_w, invalid_h = bg_img.width % 2 == 1, bg_img.height % 2 == 1
-        if invalid_w or invalid_h:
-            bg_img.crop(
-                0, 0,
-                width=bg_img.width - 1 if invalid_w else bg_img.width,
-                height=bg_img.height - 1 if invalid_h else bg_img.height
-            )
-
-    with Drawing() as drawing:
-        # fill the drawing primitives
-        drawing.font = 'assets/HelveticaNeueLTCom-Md.ttf'
-        drawing.font_size = 100
-        drawing.gravity = 'north_west'
-        text = '@Alvisepf'.replace('|', '\n')
-        drawing.fill_color = Color('#56fdb4')
-        metrics = drawing.get_font_metrics(bg_img, text, '\n' in text)
-        mask_w, mask_h = int(metrics.text_width), int(metrics.text_height)
-        drawing.text(0, 0, text)
-
-        with Image(width=mask_w, height=mask_h) as mask_img:
-            drawing.draw(mask_img)
-            mask_img.rotate(random.uniform(-35, -5))
-            scaling_factor = random.uniform(.6, .9)
-            mask_w = bg_img.width * scaling_factor
-            mask_h = mask_img.height * mask_w / mask_img.width * scaling_factor
-            mask_img.transform(resize='%dx%d' % (mask_w, mask_h))
-            offset_left = random.randint(0, bg_img.width - mask_img.width)
-            offset_top = random.randint(0, bg_img.height - mask_img.height)
-            bg_img.composite(mask_img, left=offset_left, top=offset_top)
-
-    bg_img.compression_quality = 100
-    if not new_filename:
-        new_filename = 'tmp/masked_%s.jpg' % (filename.replace('/', '_'))
-    bg_img.save(filename=new_filename)
-    return new_filename
+        return text[:max_ - 1] + '…' if len(text) > max_ else text
 
 
 if __name__ == '__main__':

@@ -2,3 +2,4 @@ token
 /tmp/*
 !/tmp/.keep
 /test_*
+__pycache__
