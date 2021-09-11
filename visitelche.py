@@ -107,7 +107,7 @@ class TelegramBot(telepot.aio.Bot):
                                      callback=self.status_callback,
                                      callback_args=(wait_msg,))
         else:
-            new_filename = await fun()
+            new_filename = fun()
 
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
