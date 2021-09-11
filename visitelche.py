@@ -1,6 +1,8 @@
 import asyncio
 # from pprint import pprint
 import os
+import random
+import time
 
 import telepot
 import telepot.aio
@@ -35,6 +37,7 @@ class TelegramBot(telepot.aio.Bot):
         super().__init__(*args, **kwargs)
         self._answerer = telepot.aio.helper.Answerer(self)
         self.last_msg_w_media = {}
+        self.last_msg_edit = 0
 
     async def on_chat_message(self, message):
         _, chat_type, chat_id, _, _ = telepot.glance(message, long=True)
@@ -83,23 +86,28 @@ class TelegramBot(telepot.aio.Bot):
             file_dest, media_type = await self.download_media(message)
         except ValueError as exc:
             await self.send_message(message, caption=str(exc))
+            return
 
         if media_type == 'photo' and type_ not in ITOV_CMDS:
             chat_action = 'upload_photo'
             attachment_type = 'photo'
             error_caption = messages.FAILED_TO_SEND_PICTURE
+            wait_msg = None
         else:
             chat_action = 'upload_video'
             attachment_type = 'file'
             error_caption = messages.FAILED_TO_SEND_VIDEO
+            wait_msg = await self.send_message(message, caption=messages.COMPOSING_VIDEO)
 
         composer = Composer(file_dest)
         fun = getattr(composer, 'compose_%s_%s' % (attachment_type, type_[1:]))
         if type_ in TEXT_CMDS:
             text = (' '.join(args.split(' ')[1:])) if args else None
-            new_filename = fun(text)
+            new_filename = await fun(text,
+                                     callback=self.status_callback,
+                                     callback_args=(wait_msg,))
         else:
-            new_filename = fun()
+            new_filename = await fun()
 
         try:
             _, _, chat_id, _, msg_id = telepot.glance(message, long=True)
@@ -109,6 +117,21 @@ class TelegramBot(telepot.aio.Bot):
                                                                      filename=new_filename)
         except Exception:
             await self.send_message(message, caption=error_caption)
+        finally:
+            if wait_msg:
+                await self.deleteMessage(telepot.message_identifier(wait_msg))
+
+    async def status_callback(self, wait_msg, current, total):
+        if current == total:
+            await self.editMessageText(telepot.message_identifier(wait_msg),
+                                       '99.%s%%...' % ('9' * random.randint(3, 12)))
+            return
+
+        if current > 0 and self.last_msg_edit < time.time() - 1:
+            current_pct = current / total * 100
+            await self.editMessageText(telepot.message_identifier(wait_msg),
+                                       '%.01f%%...' % (current_pct))
+            self.last_msg_edit = time.time()
 
     async def download_media(self, message):
         if 'video' in message or 'animation' in message:

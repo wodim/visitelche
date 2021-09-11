@@ -48,6 +48,8 @@ FFMPEG_CMD_MEGAALVISE = (
     '\'{dest}\''
 )
 
+MEGAALVISE_FRAME_COUNT = 50
+
 
 class Composer:
     def __init__(self, filename):
@@ -88,16 +90,13 @@ class Composer:
         return self.save_image(self.generate_filename(self.filename))
 
     def compose_photo_bulo(self):
-        return self._compose_photo_simple('assets/bulo%d.png' % random.randint(1, 3))
+        return self._compose_photo_simple(['assets/bulo%d.png' % random.randint(1, 3)])
 
     def compose_photo_superbulo(self):
         return self._compose_photo_simple(['assets/bulo%d.png' % i for i in range(1, 4)])
 
     def _compose_photo_simple(self, filenames):
         self.load_image()
-
-        if isinstance(filenames, str):
-            filenames = [filenames]
 
         for filename in filenames:
             mask_img = Image(filename=filename)
@@ -121,17 +120,32 @@ class Composer:
 
         return file_dest
 
-    def compose_photo_alvise(self, text=None):
+    async def compose_photo_alvise(self, text=None, **kwargs):
         self.load_image()
 
-        return self._compose_alvise(self.bg_img, text, 1)[0]
+        frame = await self._compose_alvise(self.bg_img, text=text, count=1)
+        return frame[0]
 
-    def compose_file_megaalvise(self, text=None):
+    async def compose_file_megaalvise(self, text=None, **kwargs):
         self.load_image()
         file_dest = self.generate_filename(self.filename) + '.mp4'
         glob = self.generate_filename(self.filename) + '_*.jpg'
 
-        self._compose_alvise(self.bg_img, text, 50)
+        invalid_w, invalid_h = self.bg_img.width % 2 == 1, self.bg_img.height % 2 == 1
+        if invalid_w or invalid_h:
+            self.bg_img.crop(
+                0, 0,
+                width=self.bg_img.width - 1 if invalid_w else self.bg_img.width,
+                height=self.bg_img.height - 1 if invalid_h else self.bg_img.height
+            )
+
+        await self._compose_alvise(self.bg_img, text=text, count=MEGAALVISE_FRAME_COUNT,
+                                   callback=kwargs.get('callback'),
+                                   callback_args=kwargs.get('callback_args'))
+
+        if kwargs.get('callback') and kwargs.get('callback_args'):
+            await kwargs.get('callback')(kwargs.get('callback_args')[0],
+                                         MEGAALVISE_FRAME_COUNT, MEGAALVISE_FRAME_COUNT)
 
         cmd = FFMPEG_CMD_MEGAALVISE.format(source=glob, dest=file_dest)
         subprocess.call(cmd, shell=True)
@@ -140,16 +154,22 @@ class Composer:
 
         return file_dest
 
-    def _compose_alvise(self, bg_img, text=None, count=1):
+    async def _compose_alvise(self, bg_img, text=None, count=1, **kwargs):
         with Drawing() as drawing:
             # fill the drawing primitives
             drawing.font = 'assets/HelveticaNeueLTCom-Md.ttf'
-            drawing.font_size = 160
             drawing.gravity = 'north_west'
-            text = text if text else '@Alvisepf'
             drawing.fill_color = Color('#56fdb4')
-            metrics = drawing.get_font_metrics(bg_img, text, '\n' in text)
+            text = text if text else '@Alvisepf'
+
+            # try to determine what a good font size would be
+            string_list = text.split('\n')
+            longest_string = len(max(string_list, key=len))
+            line_count = len(string_list)
+            drawing.font_size = max(min(bg_img.width / longest_string * 1.5, bg_img.height / line_count * 1.5), 4)
+
             # the drawing has some padding so ascenders and descenders do not get truncated
+            metrics = drawing.get_font_metrics(bg_img, text, '\n' in text)
             mask_w_orig, mask_h_orig = metrics.text_width, metrics.text_height + metrics.descender
             mask_w, mask_h = int(mask_w_orig * 1.02), int(mask_h_orig * 1.1)
             drawing.text(int((mask_w - mask_w_orig) / 2),
@@ -179,5 +199,10 @@ class Composer:
                     bg_img.composite(mask_img, left=offset_left, top=offset_top)
 
                     frames.append(self.save_image(self.generate_filename(self.filename, i)))
+
+                    if kwargs.get('callback') and kwargs.get('callback_args'):
+                        await kwargs.get('callback')(kwargs.get('callback_args')[0], i, count)
+
+                original_mask_img.destroy()
 
         return frames
